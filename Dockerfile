@@ -5,9 +5,9 @@ FROM python:3.11
 
 RUN apt-get update && apt-get install -y && \
     pip install --upgrade pip && \
-    # undocumented dependency for open3d
-    apt install -y libgl1-mesa-glx && \
-    apt install -y libegl1 libgl1 libgomp1
+    # undocumented dependency for open3d - try to install but don't fail if not available
+    apt install -y libegl1 libgl1 libgomp1 || true && \
+    apt install -y libgl1-mesa-glx || true
 
 # These are the needed packages for running the overview tool
 RUN pip install \
