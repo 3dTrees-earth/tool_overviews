@@ -9,6 +9,8 @@ from time import time
 from tqdm import tqdm
 import imageio.v2 as imageio
 from pathlib import Path
+import math
+from open3d.visualization import rendering as r
 
 from parameters import Parameters
 import overviews
@@ -44,6 +46,8 @@ else:
 
 sampled_points = points[mask_random]
 
+start_time = time()
+
 # Prepare colored point cloud
 logger.debug("Converting numpy array to Open3D point cloud. If this is the last message, a segfault occurred in Vector3dVector due to Open3D issues.")
 pcd = o3d.geometry.PointCloud()
@@ -54,58 +58,52 @@ heights = sampled_points[:, 2]
 colors = plt.get_cmap(params.cmap)((heights - heights.min()) / (heights.max() - heights.min()))[:, :3]
 pcd.colors = o3d.utility.Vector3dVector(colors)
 
-# GPU visualizer (headless window)
-vis = o3d.visualization.Visualizer()
-vis.create_window(visible=False, width=params.image_width, height=params.image_height)
-vis.add_geometry(pcd)
 
-ctr = vis.get_view_control()
-opt = vis.get_render_option()
-opt.background_color = np.array([1.0, 1.0, 1.0])  # white background
-opt.point_size = 1.0
+renderer = r.OffscreenRenderer(params.image_width, params.image_height)
+scene = renderer.scene
 
-# Initialize camera roughly centered
-ctr.set_lookat(center.tolist())
-ctr.set_up([0, 0, 1])
-ctr.set_front([1, 0, 0])
-ctr.set_zoom(0.7)
+# White background
+scene.set_background([1.0, 1.0, 1.0, 1.0])
+
+# Unlit point material (uses per‑vertex colors)
+mat = r.MaterialRecord()
+mat.shader = "defaultLit"
+mat.point_size = 1.0
+
+# Add initial geometry
+scene.add_geometry("cloud", pcd, mat)
+
+# Camera helpers
+bbox = pcd.get_axis_aligned_bounding_box()
+center3 = np.asarray(bbox.get_center())
+extent = np.linalg.norm(bbox.get_extent())
+radius = max(1e-6, 0.5 * extent)
+fov = 60.0
+aspect = params.image_width / params.image_height
+scene.camera.set_projection(fov, aspect, 0.1, 10000.0, r.Camera.FovType.Vertical)
+
+def _look_at(front, up=np.array([0.0, 0.0, 1.0]), zoom=0.7, target=center3, rad=radius):
+    f = _normalize(front)
+    dist = (rad / math.tan(math.radians(fov / 2.0))) / max(1e-6, zoom)
+    eye = np.asarray(target) - f * dist
+    scene.camera.look_at(np.asarray(target).tolist(), eye.tolist(), np.asarray(up).tolist())
 
 def _capture_image():
-    vis.poll_events()
-    vis.update_renderer()
-    img_float = vis.capture_screen_float_buffer(do_render=True)
-    img_uint8 = (np.asarray(img_float) * 255).astype(np.uint8)
-    return o3d.geometry.Image(img_uint8)
+    return renderer.render_to_image()
 
-# Start rendering
-start_time = time()
-
-# Top views: orbit camera around Z with slight downward tilt
-for i, angle in tqdm(enumerate(range(0, 360, params.top_views_deg)),
-                     total=int(360 / params.top_views_deg),
-                     desc="Rendering top views",
-                     file=sys.stdout):
+# --- Top views (orbit) ---
+for i, angle in enumerate(range(0, 360, params.top_views_deg)):
     rad = np.deg2rad(angle)
-    # View from above with a gentle tilt for depth perception
-    front = _normalize([np.cos(rad), np.sin(rad), 0.5])
-    ctr.set_front(front.tolist())
-    ctr.set_up([0, 0, 1])
-    ctr.set_lookat(center.tolist())
-
+    front = _normalize([np.cos(rad), np.sin(rad), -0.5])
+    _look_at(front, zoom=1, target=center3, rad=radius)
     img = _capture_image()
-    output_path = params.output_dir / f'top_view_{i:02d}.png'
-    o3d.io.write_image(str(output_path), img)
+    o3d.io.write_image(str(params.output_dir / f"top_view_{i:02d}.png"), img)
 
-# Section views with center‑based slicing and median fallback
-for direction, axis_index, front in tqdm(zip(['ns', 'ew'], [0, 1], [[1, 0, 0], [0, 1, 0]]),
-                                         total=2, file=sys.stdout):
+# --- Section views (replace geometry, then frame and render) ---
+for direction, axis_index, front in zip(["ns", "ew"], [0, 1], [[1, 0, 0], [0, 1, 0]]):
     center_coord = center[axis_index]
-
-    # Slice around center
     mask = (sampled_points[:, axis_index] > center_coord - params.section_width / 2) & \
            (sampled_points[:, axis_index] < center_coord + params.section_width / 2)
-
-    # Fallback to median if empty
     if not np.any(mask):
         median_coord = np.median(sampled_points[:, axis_index])
         mask = (sampled_points[:, axis_index] > median_coord - params.section_width / 2) & \
@@ -119,31 +117,22 @@ for direction, axis_index, front in tqdm(zip(['ns', 'ew'], [0, 1], [[1, 0, 0], [
     section_pcd = o3d.geometry.PointCloud()
     section_pcd.points = o3d.utility.Vector3dVector(section_points)
 
-    # Color along the slicing axis (consistent with old GPU method)
     color_values = section_points[:, axis_index]
     c = (color_values - color_values.min()) / max(1e-9, (color_values.max() - color_values.min()))
     section_colors = plt.get_cmap(params.cmap)(c)[:, :3]
     section_pcd.colors = o3d.utility.Vector3dVector(section_colors)
 
-    # Swap geometry in the scene to render just the section
-    vis.clear_geometries()
-    vis.add_geometry(section_pcd)
-    opt.point_size = 1.0
+    scene.clear_geometry()
+    scene.add_geometry("section", section_pcd, mat)
 
-    # Camera aligned with requested axis
-    ctr.set_front(front)
-    # Keep Z as up
-    ctr.set_up([0, 0, 1])
-    # Look at the global center but align to the section center on that axis
-    lookat = center.copy()
-    lookat[axis_index] = center_coord
-    ctr.set_lookat(lookat.tolist())
-    # Slight zoom‑out to cover the slice
-    ctr.set_zoom(0.8)
+    section_bbox = section_pcd.get_axis_aligned_bounding_box()
+    section_center = np.asarray(section_bbox.get_center())
+    section_extent = np.linalg.norm(section_bbox.get_extent())
+    section_radius = max(1e-6, 0.5 * section_extent)
 
+    _look_at(front, up=[0, 0, 1], zoom=0.8, target=section_center, rad=section_radius)
     img = _capture_image()
-    output_path = params.output_dir / f'section_{direction}.png'
-    o3d.io.write_image(str(output_path), img)
+    o3d.io.write_image(str(params.output_dir / f"section_{direction}.png"), img)
 
 logger.info(f"Rendered {len(range(0, 360, params.top_views_deg))} top views and 2 section views in {time() - start_time:.2f} seconds.")
 
@@ -164,5 +153,4 @@ for file_path in params.output_dir.iterdir():
     logger.debug(f"  {file_path.name}")
 
 # Cleanup
-vis.destroy_window()
 os.chdir(params.output_dir)
