@@ -54,10 +54,14 @@ pcd = o3d.geometry.PointCloud()
 pcd.points = o3d.utility.Vector3dVector(sampled_points)
 logger.debug("Successfully converted numpy array to Open3D point cloud. No segmentation fault was thrown.")
 
+# Outlier‑aware normalization using percentile clipping
 heights = sampled_points[:, 2]
-colors = plt.get_cmap(params.cmap)((heights - heights.min()) / (heights.max() - heights.min()))[:, :3]
+low, high = np.percentile(heights, [2, 98])
+if not np.isfinite(low) or not np.isfinite(high) or np.isclose(high, low):
+    low, high = heights.min(), heights.max()
+norm = (np.clip(heights, low, high) - low) / max(1e-9, (high - low))
+colors = plt.get_cmap(params.cmap)(norm)[:, :3]
 pcd.colors = o3d.utility.Vector3dVector(colors)
-
 
 renderer = r.OffscreenRenderer(params.image_width, params.image_height)
 scene = renderer.scene
