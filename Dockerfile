@@ -1,15 +1,15 @@
-# IMPORTANT: as of May 2025, open3d is not available for python 3.13
-# And there is also no chance to get the 3.12 running with linux, while mac works, though
-FROM python:3.11
+# Base image with CUDA support
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
 
+ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y && \
-    pip install --upgrade pip && \
-    # undocumented dependency for open3d - try to install but don't fail if not available
-    apt install -y libegl1 libgl1 libgomp1 || true && \
-    apt install -y libgl1-mesa-glx || true
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-venv python3-dev build-essential git \
+    libgl1 libglvnd0 libglx0 libegl1 libgles2 libglib2.0-0 \
+ && ln -s /usr/bin/python3 /usr/local/bin/python \
+ && python -m pip install --upgrade pip \
+ && rm -rf /var/lib/apt/lists/*
 
-# These are the needed packages for running the overview tool
 RUN pip install \
     geopandas \
     "laspy[lazrs,laszip]" \
@@ -24,15 +24,13 @@ RUN pip install \
     tqdm \
     pytest
 
+# Ensure EGL headless rendering and expose graphics capability
+ENV OPEN3D_RENDERING_PROVIDER=egl
 ENV EGL_PLATFORM=surfaceless
-
-RUN mkdir -p /src && mkdir -p /in && mkdir -p /out
-COPY ./src /src
-
-# Debugging dependencies
-RUN pip install ipython \
-    debugpy
-
+ENV MPLBACKEND=Agg
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility
 
 WORKDIR /src
-CMD ["python", "run.py"]
+COPY ./src /src
+ENTRYPOINT ["python", "run.py"]
