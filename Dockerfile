@@ -33,4 +33,4 @@ ENV NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility
 
 WORKDIR /src
 COPY ./src /src
-ENTRYPOINT ["python", "run.py"]
+CMD ["python", "run.py"]
