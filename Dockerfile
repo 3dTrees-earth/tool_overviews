@@ -31,6 +31,6 @@ ENV MPLBACKEND=Agg
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility
 
-WORKDIR /src
 COPY ./src /src
+WORKDIR /src
 CMD ["python", "run.py"]
