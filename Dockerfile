@@ -31,6 +31,15 @@ ENV MPLBACKEND=Agg
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility
 
-COPY ./src /src
+# Redirect cache directories to /tmp (always writable regardless of user)
+ENV HOME=/tmp
+ENV XDG_CACHE_HOME=/tmp/.cache
+ENV XDG_CONFIG_HOME=/tmp/.config
+ENV FONTCONFIG_CACHE=/tmp/.fontconfig
+ENV MPLCONFIGDIR=/tmp/.matplotlib
+
 WORKDIR /src
-CMD ["python", "run.py"]
+COPY ./src /src
+
+# No ENTRYPOINT - let Galaxy control the command execution
+CMD ["python", "run.py", "--help"]
