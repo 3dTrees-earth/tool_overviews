@@ -1,78 +1,69 @@
 import numpy as np
 import laspy
-import open3d as o3d
-from shapely.geometry import Polygon
-from pyproj import Transformer
+from typing import List
+import logging
+
+logger = logging.getLogger(__name__)
 
 
-def load_dataset(dataset_path: str):
+def load_single_dataset(dataset_path: str) -> np.ndarray:
+    """Load a single point cloud and return centered points."""
     las = laspy.read(dataset_path)
     points = np.vstack((las.x, las.y, las.z)).T
-    center = points.mean(axis=0)
-
-    # Compute bounding box in original coordinates
-    min_x, min_y = np.min(points[:, :2], axis=0)
-    max_x, max_y = np.max(points[:, :2], axis=0)
-
-    # Define bounding box polygon
-    bbox_polygon = Polygon([(min_x, min_y), (max_x, min_y), (max_x, max_y), (min_x, max_y)])
-
-    points -= center  # Shift points to be centered at the origin
-
-    # Get CRS from LAS file
-    input_crs = None
-    if las.header.parse_crs():
-        input_crs = las.header.parse_crs()
-    if input_crs is None:
-        raise ValueError("No spatial reference found in LAS file.")
-        
-    # Transform to EPSG:3857 (Web Mercator)
-    transformer = Transformer.from_crs(input_crs, "EPSG:4326", always_xy=True)
-    transformed_coords = [transformer.transform(x, y) for x, y in bbox_polygon.exterior.coords]
-    bbox_polygon_4326 = Polygon(transformed_coords)
-
-    return points, bbox_polygon_4326
+    points -= points.mean(axis=0)  # Center at origin
+    return points
 
 
-def render_top_down_views(renderer, angle: float, center: np.ndarray, camera_distance: float):
-    direction = np.array([np.cos(np.radians(angle)), np.sin(np.radians(angle)), 0.5])
-    up = np.array([0, 0, 1])
-    eye = center + direction * camera_distance
-    renderer.setup_camera(60.0, center, eye, up)
-    img = renderer.render_to_image()
-    return img
-
-
-def render_section_views(renderer, points: np.ndarray, axis_index: int, direction: str, front: np.ndarray, mat: o3d.visualization.rendering.MaterialRecord, center: np.ndarray, section_width: float):
-    center_coord = center[axis_index]
-
-    # Initial mask using center-based slicing
-    mask = (points[:, axis_index] > center_coord - section_width / 2) & \
-            (points[:, axis_index] < center_coord + section_width / 2)
-
-    # If mask is empty, fall back to median coordinate
-    if not np.any(mask):
-        median_coord = np.median(points[:, axis_index])
-        mask = (points[:, axis_index] > median_coord - section_width / 2) & \
-                (points[:, axis_index] < median_coord + section_width / 2)
-        if not np.any(mask):
-            print(f"Skipping section view {direction} — no points in center or median slice.")
-            return None           
-        center_coord = median_coord
-        
-    section_points = points[mask]
-    section_pcd = o3d.geometry.PointCloud()
-    section_pcd.points = o3d.utility.Vector3dVector(section_points)
-    renderer.scene.clear_geometry()
-    renderer.scene.add_geometry("section_pcd", section_pcd, mat)
+def load_and_aggregate_datasets(paths: List[str], max_total_points: int) -> np.ndarray:
+    """
+    Load multiple point clouds and aggregate with proportional sampling.
     
-    # Set camera for section view
-    section_center = section_pcd.get_center()
-    eye = section_center + np.array(front) * 10
-    up = np.array([0, 0, 1])
-    renderer.setup_camera(60.0, section_center, eye, up)
+    Memory efficient: samples from each file before merging.
+    Proportional: larger files contribute more points.
     
-    img = renderer.render_to_image()
-    return img
-
-
+    Args:
+        paths: List of paths to LAZ/LAS files
+        max_total_points: Maximum total points in the aggregated result
+        
+    Returns:
+        Centered numpy array of shape (N, 3) containing merged points
+    """
+    # 1. First pass: count points per file
+    file_infos = []
+    total_points = 0
+    for path in paths:
+        las = laspy.read(path)
+        count = len(las.points)
+        file_infos.append({'path': path, 'count': count})
+        total_points += count
+        logger.debug(f"File {path}: {count:,} points")
+    
+    logger.info(f"Total points across {len(paths)} files: {total_points:,}")
+    
+    # 2. Calculate sample ratio (proportional sampling)
+    sample_ratio = min(1.0, max_total_points / total_points)
+    if sample_ratio < 1.0:
+        logger.info(f"Sampling ratio: {sample_ratio:.4f} (target: {max_total_points:,} points)")
+    
+    # 3. Load and sample each file (memory efficient)
+    all_points = []
+    for info in file_infos:
+        las = laspy.read(info['path'])
+        points = np.vstack((las.x, las.y, las.z)).T
+        
+        # Sample this file's points immediately
+        n_sample = int(info['count'] * sample_ratio)
+        if n_sample < len(points):
+            indices = np.random.choice(len(points), n_sample, replace=False)
+            points = points[indices]
+            logger.debug(f"Sampled {n_sample:,} points from {info['path']}")
+        
+        all_points.append(points)
+    
+    # 4. Merge sampled points and center
+    merged = np.vstack(all_points)
+    merged -= merged.mean(axis=0)
+    
+    logger.info(f"Merged result: {len(merged):,} points")
+    
+    return merged
