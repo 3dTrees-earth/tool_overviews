@@ -7,7 +7,6 @@ import open3d as o3d
 import matplotlib.pyplot as plt
 from time import time
 from tqdm import tqdm
-import imageio.v2 as imageio
 from pathlib import Path
 import math
 from open3d.visualization import rendering as r
@@ -151,13 +150,6 @@ for direction, axis_index, front in zip(["ns", "ew"], [0, 1], [[1, 0, 0], [0, 1,
     o3d.io.write_image(str(params.output_dir / f"section_{direction}.png"), img)
 
 logger.info(f"Rendered {len(range(0, 360, params.top_views_deg))} top views and 2 section views in {time() - start_time:.2f} seconds.")
-
-# Create overview GIF animation
-images = []
-for img_path in sorted(params.output_dir.glob("top_view_*.png")):
-    images.append(imageio.imread(img_path))
-imageio.mimsave(str(params.output_dir / "overview_round.gif"), images, duration=0.15, loop=0)
-logger.debug(f"Created overview GIF animation at {params.output_dir / 'overview_round.gif'}")
 
 # Debug: list outputs
 logger.debug("=== DEBUG: Output directory contents ===")
