@@ -41,8 +41,8 @@ if len(laz_files) == 0:
 logger.info(f"Found {len(laz_files)} file(s) in collection: {[f.name for f in laz_files]}")
 
 if len(laz_files) == 1:
-    # Single file - load directly
-    points = overviews.load_single_dataset(str(laz_files[0]))
+    # Single file - load with sampling limit to prevent memory exhaustion
+    points = overviews.load_single_dataset(str(laz_files[0]), max_points=params.max_total_points)
     logger.info(f"Loaded {len(points):,} points from single file")
 else:
     # Multiple files - aggregate with proportional sampling

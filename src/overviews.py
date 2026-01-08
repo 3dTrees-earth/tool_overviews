@@ -6,10 +6,26 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def load_single_dataset(dataset_path: str) -> np.ndarray:
-    """Load a single point cloud and return centered points."""
+def load_single_dataset(dataset_path: str, max_points: int = None) -> np.ndarray:
+    """
+    Load a single point cloud and return centered points.
+    
+    Args:
+        dataset_path: Path to LAZ/LAS file
+        max_points: Maximum number of points to return (random sampling if exceeded)
+        
+    Returns:
+        Centered numpy array of shape (N, 3)
+    """
     las = laspy.read(dataset_path)
     points = np.vstack((las.x, las.y, las.z)).T
+    
+    # Apply sampling if max_points specified and file is larger
+    if max_points is not None and len(points) > max_points:
+        indices = np.random.choice(len(points), max_points, replace=False)
+        points = points[indices]
+        logger.info(f"Sampled {max_points:,} points from {len(las.points):,} total")
+    
     points -= points.mean(axis=0)  # Center at origin
     return points
 
@@ -52,7 +68,8 @@ def load_and_aggregate_datasets(paths: List[str], max_total_points: int) -> np.n
         points = np.vstack((las.x, las.y, las.z)).T
         
         # Sample this file's points immediately
-        n_sample = int(info['count'] * sample_ratio)
+        # Ensure at least 1 point per file to avoid empty arrays
+        n_sample = max(1, int(info['count'] * sample_ratio))
         if n_sample < len(points):
             indices = np.random.choice(len(points), n_sample, replace=False)
             points = points[indices]
