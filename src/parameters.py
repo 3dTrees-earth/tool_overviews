@@ -6,7 +6,7 @@ from pathlib import Path
 class Parameters(BaseSettings):
     """CLI parameters for the overview tool"""
     input_dir: Path = Field(..., description="Directory containing LAZ/LAS files to process", alias=AliasChoices("input-dir", "input_dir"))
-    max_total_points: int = Field(50_000_000, alias=AliasChoices("max-total-points", "max_total_points"), description="Maximum total points when aggregating. Points are sampled proportionally from each file.")
+    max_total_points: int = Field(40_000_000, alias=AliasChoices("max-total-points", "max_total_points"), description="Maximum total points when aggregating. Points are sampled proportionally from each file.")
     section_width: int = Field(10, alias=AliasChoices("section-width", "section_width"))
     image_width: int = Field(1024, alias=AliasChoices("image-width", "image_width"))
     image_height: int = Field(768, alias=AliasChoices("image-height", "image_height"))
