@@ -82,7 +82,7 @@ scene.set_background([1.0, 1.0, 1.0, 1.0])
 
 # Unlit point material (uses per-vertex colors)
 mat = r.MaterialRecord()
-mat.shader = "defaultUnlit"
+mat.shader = "defaultLit"
 mat.point_size = 1.0
 
 # Add initial geometry
